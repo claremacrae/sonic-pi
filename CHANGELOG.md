@@ -1,4 +1,7 @@
 # History
+* [v2.9 'Venster'](#v2.9), 31st Dec, 2015
+* [v2.8 'Karlsruhe'](#v2.8), 20th Nov, 2015
+* [v2.7 'Rerezzed'](#v2.7), 10th Sept, 2015
 * [v2.6 'Algorave'](#v2.6), 30th July, 2015
 * [v2.5 'Craft'](#v2.5), 13th April, 2015
 * [v2.4 'Defrost'](#v2.4), 11th Feb, 2015
@@ -6,6 +9,335 @@
 * [v2.2 'Slicer'](#v2.2), 18th Dec, 2014
 * [v2.1 'Core'](#v2.1), 21st Nov, 2014
 * [v2.0 'Phoenix'](#v2.0), 2nd Sept, 2014
+
+<a name="v2.9"></a>
+
+## Version 2.9 - 'Venster'
+*Thursday 31st December, 2015*
+
+Hot on the heels of the previous release comes `v2.9` codenamed
+`Venster` (Dutch for window). This release has a specific focus on
+fixing all the known issues with Sonic Pi running on Windows. If you've
+tried Sonic Pi on Windows before and had issues, make sure to try it
+again with `v2.9`. If you're still having issues on Windows please do
+let us know so we can fix it as soon as possible.
+
+For all you Raspberry Pi and Mac OS X users - you're not left out. Sonic
+Pi is just as stable as it was before (if not more stable) and `v2.9`
+comes with a surprising amount of tweaks and features for its short 1
+month development cycle. There's two new FX to play with: `tanh` and
+`gverb` as well as a heavily revamped logging system which is much
+clearer about printing which opts are actually being used for your
+synths and samples. Finally, we now include of all the published MagPi
+magazine articles in the tutorial. We also now have Hungarian and
+Norwegian translations of the GUI.
+
+Happy Live Coding!
+
+### Breaking Changes
+
+* Rename fn `invert_chord` to `chord_invert`
+* Sampler no longer mixes `rate:` and `pitch_stretch:` opts. It's now
+  possible to set the `rate:` independent of the `pitch:` modification
+  caused by `pitch_stretch`.
+
+### New Fns
+
+* `block_duration` - returns the duration of the given block in seconds (not scaled with the BPM).
+* `block_slept?` - returns true if the contents of the block slept or synced.
+* `synth_names` - returns a list of all the available synths
+* `reset_mixer!` - resets the main mixer back to its default values.
+* `sample_free` - unload a sample from memory to free up memory usage.
+* `sample_free_all` - unload all samples from memory.
+* `use_octave` - similar to `use_transpose` but for whole octaves.
+* `with_octave` - similar to `with_transpose` but for whole octaves.
+* `use_merged_sample_defaults` - similar to `use_merged_synth_defaults`
+  but for samples
+* `with_merged_sample_defaults` - similar to
+  `with_merged_synth_defaults` but for samples
+* `use_cent_tuning` - uniformly tune all subsequent notes in cents
+* `with_cent_tuning` - uniformly tune all notes in cents within the block
+
+### Synths & FX
+
+* New FX `tanh` - for more distortion goodness.
+* New FX `gverb` - a different reverb FX to play with.
+
+### GUI
+
+* Synths and samples now also log defaults set by `use_synth_defaults`
+  and friends.
+* Opts are logged in the order they were defined with local opts first
+  followed by inherited opts. 
+* BPM scaling is now accounted for in logging vals.
+* Log metadata such as run number and time is now printed in a more
+  code-like way: as a hash of key value pairs.
+* `C-k` will now kill multiple lines if lines end with `,`.
+* When saving a buffer a `.txt` extension is automatically added to the
+  file name if none specified.
+* Add Hungarian and Norwegian translations of GUI.
+* Add title to main window - enables Sonic Pi to be selected in
+  screensharing app lists such as Google Hangouts and OBS.
+* Add autocompletion for tuning systems.
+
+### Documentation
+
+* Add 8 complete MagPi magazine articles to the tutorial in appendix A.
+* Add new example 'ambient experiment' by Darin Wilson.
+* Add new example 'chord inversions' by Adrian Cheater.
+* Change tutorial license to CC-BY-SA 4.0.
+* Add instructions for compiling and building on Windows.
+* Many, many minor tweaks and improvements.
+
+
+### Improvements
+
+* Add `sync:` opt to `live_loop` and `in_thread`. This now syncs the
+  live loop once on creation. Similar to the `delay:` opt. If both
+  `sync:` and `delay:` are specified then the delay happens before the
+  sync.
+* The `synth` fn can now play chords with the `notes:` opt such as:
+  `synth :dsaw, notes: (chord :e3, :minor)`. This will return a single
+  controllable synth node representing all the notes similar to
+  `play_chord`.
+* BPM scaling and other normalisation is now honoured when controlling nodes
+* The `on:` opt is now honoured when playing chords.
+* Samplers sound signal now bypasses filter envelope when not used.
+* It is now possible to use externally defined FX synths by passing a
+  string as the FX name: `with_fx "my_shiny_effect"`. This needs to be
+  loaded manually via `load_synthdefs`.
+* OS X now supports rates other than 44.1k provided they are similar for
+  both audio in and out.
+* Run code in `~/.sonic-pi/init.rb` on launch if it exists.  
+* If environment variable `SONIC_PI_HOME` is set it will be used over
+  `~` as the root of the user's `.sonic-pi` directory (used to auto-save
+  files and store logs).
+* Default sound card selection is now honoured on Raspberry Pi - so you
+  may now use your IQaudIO hat (or similar) out of the box.
+
+
+### Bugfixes
+
+* Fix number of synth validation errors.
+* Fix sporadically failing boot issues on Windows
+* Add auto-reboot functionality for audio server. This now detects
+  errors in the server (such as a killed or zombied process) and
+  automatically reboots it to enable Sonic Pi to continue without a full
+  restart. Reboots automatically reload all loaded samples and
+  synthdefs.
+* `sample_duration` now correctly takes account of TL defaults set by
+  `use_sample_defaults`.
+* Sampler opts `pitch_stretch`, `beat_stretch` and `rpitch` can now be
+  used in TL defaults.
+
+<a name="v2.8"></a>
+
+## Version 2.8 - 'Karlsruhe'
+*Friday 20th November, 2015*
+
+This release, named after Karlsruhe, one of the home cities of live
+coding, is mainly a maintenance release with a strong focus on both
+performance, stability and documentation. This is therefore the fastest
+and most stable release of Sonic Pi ever with a massive 10% performance
+improvement on the original Raspberry Pi 1. It also ships with new
+translations in Polish, Japanese and French. Many of these improvements
+(such as the complete rewrite of the OSC stack) are not documented in
+this release list but can instead be found in the commit logs over on
+Github.
+
+However, not to go unnoticed are a number of exciting new features. For
+example we now have a new Band EQ FX, the ability to use MIDI note names
+such as `:e5` as values for opts such as `cutoff:`, and new powerful
+cutoff envelopes on the sampler.
+
+
+
+### Breaking Changes
+
+* Shortcuts for switching buffers have changed. They are now `M-{` and
+  `M-}` for switching left and right respectively.
+* `sync` no longer inherits BPM by default. Set the `bpm_sync:` opt to
+  true to enable BPM inheritance.
+* Random seed generation for new threads is now reset on calls to
+  `use_random_seed`.
+
+### New Fns
+
+* `octs` - returns a ring of successive octaves.
+* `assert` - for raising an exception if the argument is not true.
+* `assert_equal` - for raising an exception if the two arguments are not
+  equal.
+* `bt` - converts the specified time w.r.t. the current BPM.
+* `inspect` - similar to `print` but prints the inspected version of the argument.
+
+### GUI
+
+* New translations for Polish, Japanese and French.
+* Improve efficiency of logging panel.
+* `M-RET` is now a duplicate shortcut for running the code.
+* Log title bar is now hidden in full-screen mode.
+* Log - don't display └ or ├ if the line is blank, instead display │
+* Add sample name autocompletion to more fns such as `sample_duration`.
+
+### Documentation
+
+* New tutorial section on ring chains (chainable functions for modifying rings)
+* Tilburg 2 example slightly tweaked for Raspberry Pi 1 compatibility.
+* Many minor tweaks and improvements in all areas.
+
+### Synths & FX
+
+* New FX - Band EQ for attenuating or boosting a specific frequency band.
+* New synth - DPulse - a detuned pulse wave.
+* Sampler now has a cutoff envelope which can be accessed via new opts
+  which mirror the standard envelope opts but with a `cutoff_` prefix
+  (such as `cutoff_attack`, `cutoff_decay_level` and friends).
+* Sampler now correctly handles samples with different sample rates.
+* Bitcrusher FX now has an internal low pass filter modifiable via a new `cutoff` opt.
+* Panslicer now correctly honours min and max pan values.
+* New default opt `on:` for both `sample` and `synth`. This acts like
+  `if` but ensures all the opt vals are evaluated (useful if wanting to
+  keep the consumption of random streams or ticks consistent even when
+  not triggering a synth.
+* MIDI opts such as `cutoff:` can now accept note names such as `:c4`.
+* FX learned the global `slide:` opt to match synths.
+
+### Improvements
+
+* Massive performance improvements.
+* Teach `play_pattern_timed` to handle rings.
+* `current_transpose` now returns 0 if there is no current
+  transposition.
+* BPM scaling is now honoured when controlling synths and FX
+* All `with_fx*` fns now return the result of their block.
+* `spark` now handles rings correctly.
+* `spark` now treats booleans as 1s and 0s so you can now spark rings of bools.
+* `puts`, `print` and `mc_message` now handle multiple message arguments
+
+
+### Bug Fixes
+
+* Ensure `with_fx` doesn't swallow TL modifications such as
+  transposition, current synth etc.
+* Ensure `with_fx` doesn't affect random seed.
+* Improve reliability of boot process on Mac and Windows.
+* The FX `pre_amp:` opt is no longer scaled w.r.t. the current BPM.
+* Fixed GUI side of update checking system.
+
+<a name="v2.7"></a>
+
+## Version 2.7 - 'Rerezzed'
+*Thursday 10th September, 2015*
+
+This release brings a substantial change to the random number
+generator. This has the unfortunate side effect of breaking backwards
+compatibility.  If you have been using `rand`, `choose`, `shuffle` and
+friends to create predictable patterns for your riffs, your code will
+produce different results in this release. Please let me apologise and
+say it's for a good cause. So what is this good cause?  Well, you can
+now jump backwards and forwards through the random stream giving you way
+more creative control than before! The random stream is now also unified
+with the random stream on the synthesis server allowing you to sync
+behaviour between synths and code. Exciting times.
+
+The sampler has also been super charged. We can now easily change the
+rate via MIDI note intervals with `rpitch:` and stretch the sample whilst
+preserving pitch via `pitch_stretch:` (although with variable results
+`;-)`).
+
+Finally you can now control the global mixer with `set_mixer_control!`
+for those full filter sweeps over the entire sound...
+
+Have fun and happy live coding!
+
+
+### Breaking Changes
+
+* Complete rewrite of random number system. This means if you've been
+  combining calls to `use_random_seed` with randomisation to create
+  predictable melodies/rhythms/timbral manipulations you will
+  unfortunately get different results in `v2.7`. This change is to
+  synchronise both the Ruby rand stream with the one in SuperCollider as
+  well as enabling the reversal of calls to rand via `rand_back`.
+* `sync` now causes the BPM to be inherited from the thread calling the
+  matching `cue`. This may be disabled with the new `bpm_sync:` opt.
+* `rrand` and `rand` now return 0 if called with 0.
+* `invert_chord` now handles negative inversions in a more musically
+  appropriate manner..
+
+
+### New Fns
+
+* `ratio_to_pitch` which provides the inverse of `pitch_to_ratio`
+* `midi_notes` - returns a ring of numbers (mapping the source
+  ring/array through the fn `note`).
+* `rand_back` - reverse the random stream and 'undo' calls to `rand`
+* `rand_skip` - skip forward through the random stream.
+* `rand_reset`- reset the random stream to the last seed.
+
+
+### GUI
+
+* It is now possible to toggle the commenting of whole selections or
+  individual lines with the shortcut `M-/`.
+* Added Icelandic translation.
+
+  
+### Synths & FX
+
+* All synths learned the `decay_level` opt to allow the sustain phase to
+  shift between two distinct values. The default value for `decay_level`
+  is to mirror `sustain_level:` thus preserving current behaviour.
+* `play` and `synth` have now learned the `pitch:` opt to match
+  `sample`. This just increments or decrements the final note.
+* `sample` now correctly validates opts.
+* `sample` learned the `pitch_stretch:` opt which combines `rate:`
+  modification (similar to `beat_stretch:` with `pitch:`. Attempts to
+  maintain the pitch whilst simultaneously changing the rate. The
+  underlying implementation is very basic and can easily destroy the
+  sound.
+* `sample` learned the `rpitch:` opt for simple rate pitch
+  modulation. This modifies the rate to match the specified number of
+  MIDI notes relative from the current pitch. For example, a `rpitch:`
+  of 12 would double the rate.
+* The unit of the FX `:echo`'s `decay:` opt is now beats and the value
+  is scaled with the BPM.
+
+
+### Examples
+
+* Most examples have been tweaked to sound good with the new random
+  generator. 
+* Tilburg has been replaced with Tilburg 2. Play it and get your
+  Algorave on!
+
+
+### Improvements
+
+* Auto-align code on Run.
+* `live_loop` learned the `seed:` opt which will set the new thread with
+  the specified seed prior to initial run.
+* Add check to ensure BPM is a positive value.
+* `density` has now been taught to handle values between 0 and 1 which
+  will now stretch time for the specified block.
+* Errors now no longer print out crazy print version of context object
+  i.e. #<SonicPiSpiderUser1:0x007fc82e1f79a0>
+* Both `in_thread` and `live_loop` have now learned the `delay:` opt
+  which will delay the initial execution by the specified number of
+  beats.
+* Buffer and thread name are now printed on error.  
+* `sample_duration` now understands all the opts that you can pass to `sample`  
+* It is now possible to do basic arithmetic on symbols representing
+  rests: `:r + 3` returns `:r` (a rest plus any MIDI note shift is still
+  a rest).
+
+
+### Bug Fixes
+  
+* Fixed crash when synth args were specified as Rationals.  
+* `note_info` now correctly handles octaves.
+* Fix windows paste shortcut `C-v`.
+* Teach `invert_chord` how to properly handle out of range index ranges.
 
 <a name="v2.6"></a>
 
@@ -47,7 +379,7 @@ Enjoy this release and happy [Algoraving!](http://algorave.com)
 
 * The `res:` opt for all synths and FX now has range 0->1 rather than
   1->0. This means that a higher res value results in more
-  resonance. This will hopefully be more intuitive to beginners less
+  resonance. This will hopefully be more intuitive to beginners and less
   surprising for people with existing synth knowledge.
 * The fn `stop` has been renamed to `kill` for killing specific
   synths. In its place a new fn `stop` has been added to stop a given
@@ -58,14 +390,14 @@ Enjoy this release and happy [Algoraving!](http://algorave.com)
   specify: `invert_wave: true`, rather than `invert_wave: false`. This
   shouldn't affect any code which doesn't explicitly set the `invert_wave:`
   opt. Pieces which have explicit inversion need to swap all 0s for 1s
-  and visa versa.
+  and vice versa.
 * The `res:` opt for `rrand` and `rdist` has been renamed to `step:` to
   avoid confusion with the resonance opt for cutoff filters.
 * Rename `pitch_ratio` to `pitch_to_ratio` to keep in line with other
   similar fns such as `midi_to_hz`.
 
 
-### New
+### New Fns
 
 * New thread-local (i.e. live_loop local) counter system via fns `tick`
   and `look`.
@@ -89,7 +421,7 @@ Enjoy this release and happy [Algoraving!](http://algorave.com)
   `tick` to create sophisticated polyrhythms.
 * New fns `use_cue_logging` and `with_cue_logging` for enabling and
   disabling the logging of `cue` messages.
-* It is now possible to set the block type in the Minecraft API.
+
 
 
 ### GUI  
@@ -156,12 +488,13 @@ Enjoy this release and happy [Algoraving!](http://algorave.com)
   duration of that call.
 * Teach `chord` the opt `num_octaves` to enable the easy creation of
   arpeggios.
+* It is now possible to set the block type in the Minecraft API.
 
 
 ### Bug Fixes
 
 * Fix bug in `with_sample_pack_as` to now correctly accept a block.
-* `mx_surface_teleport` no longer throws an error.
+* `mc_surface_teleport` no longer throws an error.
 * `Array#shuffle` now works correctly with the random seeds for
   deterministic behaviour.
 * Fix broken behaviour with multiple nested calls to `*_sample_bpm`.
@@ -200,7 +533,7 @@ most powerful text editor in use by wizard programmers today.
 
 ### New
 
-1* Support for programming [Minecraft Pi Edition](http://pi.minecraft.net).
+* Support for programming [Minecraft Pi Edition](http://pi.minecraft.net).
 * `sync` now accepts multiple cue ids and will sync on the first matching id.
 * New fn `pitch_ratio` for converting a midi note to a frequency
   ratio. Useful for tuning samples.
@@ -276,9 +609,9 @@ fun!
 
 * New fn `spread` for creating rings of Euclidean distributions. Great
   for quickly creating interesting rhythms.
-* GUI now automatically appends a `:` to the FX param autocomplete list  
+* GUI now automatically appends a `:` to the FX opt autocomplete list  
 * Synths and FX now raise an exception if any of their non-modulatable
-  params are modulated. This is disabled when the pref 'check synth
+  opts are modulated. This is disabled when the pref 'check synth
   args' is unchecked.
 * GUI now renders pretty UTF-8 `└─` `├─` characters when printing in the log
   on RP.
@@ -291,7 +624,7 @@ fun!
 * New Synth `:growl`, a deep rumbling growl.
 * Sampler synths now sport built-in `rlpf` and `normaliser` FX. These
   are disabled by default (i.e. won't affect sound of the sample) and
-  can by enabled via the new `cutoff:`, `res:` and `norm:` params.
+  can by enabled via the new `cutoff:`, `res:` and `norm:` opts.
 
 ### Bug Fixes
 
@@ -513,17 +846,17 @@ Riley, Jeremy Weatherford and Joseph Wilk.
 
 ### Synths, Samples & FX
 * New samples (bass drums, snares and loops)
-* Allow `mod_range` param to have negative values (for oscillating with lower notes)
+* Allow `mod_range:` opt to have negative values (for oscillating with lower notes)
 * Change slide mechanism to default to linear sliding with support for changing the curve type. All modifiable args now have corresponding  `_slide_shape` and `_slide_curve` args.
-* Improve TB303 synth - now supports separate cutoff ADSR envelopes. New args:
-  - `cutoff_attack`,
-  - `cutoff_sustain`,
-  - `cutoff_decay`,
-  - `cutoff_release`,
-  - `cutoff_min_slide`,
-  - `cutoff_attack_level`,
-  - `cutoff_sustain_level`,
-  - `cutoff_env_curve`
+* Improve TB303 synth - now supports separate cutoff ADSR envelopes. New opts:
+  - `cutoff_attack:`,
+  - `cutoff_sustain:`,
+  - `cutoff_decay:`,
+  - `cutoff_release:`,
+  - `cutoff_min_slide:`,
+  - `cutoff_attack_level:`,
+  - `cutoff_sustain_level:`,
+  - `cutoff_env_curve:`
 
 
 ## Version 2.0.1

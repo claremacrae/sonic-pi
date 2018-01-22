@@ -20,7 +20,7 @@ module SonicPi
   class Jobs
 
     def initialize
-      @jobs_A = Atom.new(Hamster.hash)
+      @jobs_A = Atom.new(Hamster::Hash.new)
     end
 
     def add_job(id, job, info)
@@ -46,6 +46,10 @@ module SonicPi
           job[:job].kill
         end
       end
+    end
+
+    def running?(id)
+      @jobs_A.deref[id]
     end
 
     def each_id(&block)

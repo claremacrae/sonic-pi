@@ -57,6 +57,7 @@ SOURCES += main.cpp \
            sonicpiapis.cpp \
            sonicpiscintilla.cpp \
            oschandler.cpp \
+           sonicpilog.cpp \
            sonicpiserver.cpp \
            sonicpiudpserver.cpp \
            sonicpitcpserver.cpp \
@@ -71,6 +72,7 @@ HEADERS  += mainwindow.h \
             oscpkt.hh \
             udp.hh \
             sonicpilexer.h \
+            sonicpilog.h \
             sonicpiapis.h \
             sonicpiscintilla.h \
             oschandler.h \
@@ -80,7 +82,14 @@ HEADERS  += mainwindow.h \
             sonicpitcpserver.h \
             sonicpitheme.h
 
-TRANSLATIONS = lang/sonic-pi_de.ts
+TRANSLATIONS = lang/sonic-pi_de.ts \
+               lang/sonic-pi_is.ts \
+               lang/sonic-pi_ja.ts \
+               lang/sonic-pi_nb.ts \
+               lang/sonic-pi_pl.ts \
+               lang/sonic-pi_fr.ts \
+               lang/sonic-pi_es.ts \
+               lang/sonic-pi_hu.ts
 
 OTHER_FILES += \
     images/copy.png \

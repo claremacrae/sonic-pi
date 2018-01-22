@@ -48,6 +48,7 @@ class SonicPiLexer;
 class QString;
 class QSlider;
 class SonicPiAPIs;
+class SonicPiLog;
 class SonicPiScintilla;
 class SonicPiServer;
 
@@ -72,7 +73,7 @@ public:
 #else
     MainWindow(QApplication &ref, bool i18n, QSplashScreen* splash);
 #endif
-    void invokeStartupError(QString msg);
+
     SonicPiServer *sonicPiServer;
     enum {UDP=0, TCP=1};
     QCheckBox *dark_mode;
@@ -82,7 +83,12 @@ protected:
     void closeEvent(QCloseEvent *event);
     void wheelEvent(QWheelEvent *event);
 
+
+public slots:
+    void invokeStartupError(QString msg);
+
 private slots:
+    bool eventFilter(QObject *obj, QEvent *evt);
     void changeTab(int id);
     QString asciiArtLogo();
     void printAsciiArtLogo();
@@ -98,6 +104,8 @@ private slots:
     void beautifyCode();
     void completeListOrIndentLine(QObject *ws);
     void indentCurrentLineOrSelection(SonicPiScintilla *ws);
+    void toggleCommentInCurrentWorkspace();
+    void toggleComment(SonicPiScintilla *ws);
     void reloadServerCode();
     void stopRunningSynths();
     void mixerInvertStereo();
@@ -113,11 +121,10 @@ private slots:
     void about();
     void help();
     void onExitCleanup();
-    void zoomFontIn();
-    void zoomFontOut();
     void toggleRecording();
     void toggleRecordingOnIcon();
     void changeRPSystemVol(int val);
+    void changeGUITransparency(int val);
     void setRPSystemAudioAuto();
     void setRPSystemAudioHeadphones();
     void setRPSystemAudioHDMI();
@@ -153,12 +160,16 @@ private slots:
     void toggleButtonVisibility();
     void setLineMarkerinCurrentWorkspace(int num);
     void setUpdateInfoText(QString t);
-    void updateVersionNumber(QString version, int version_num, QString latest_version, int latest_version_num, QDate last_checked_date);
+    void updateVersionNumber(QString version, int version_num, QString latest_version, int latest_version_num, QDate last_checked_date, QString platform);
     void requestVersion();
     void open_sonic_pi_net();
+    void heartbeatOSC();
+    void zoomCurrentWorkspaceIn();
+    void zoomCurrentWorkspaceOut();
 
 private:
 
+    void setupLogPathAndRedirectStdOut();
     QSignalMapper *signalMapper;
     void startServer();
     void waitForServiceSync();
@@ -184,6 +195,7 @@ private:
                      int len);
     QListWidget *createHelpTab(QString name);
     QKeySequence metaKey(char key);
+    Qt::Modifier metaKeyModifier();
     QKeySequence shiftMetaKey(char key);
     QKeySequence ctrlMetaKey(char key);
     QKeySequence ctrlKey(char key);
@@ -200,7 +212,6 @@ private:
     QTcpSocket *clientSock;
     QFuture<void> osc_thread, server_thread;
     int protocol;
-
     bool focusMode;
     bool startup_error_reported;
     bool is_recording;
@@ -218,12 +229,14 @@ private:
     SonicPiScintilla *workspaces[workspace_max];
     QWidget *prefsCentral;
     QTabWidget *docsCentral;
-    QTextEdit *outputPane;
+    SonicPiLog *outputPane;
     QTextBrowser *errorPane;
     QDockWidget *outputWidget;
     QDockWidget *prefsWidget;
     QDockWidget *hudWidget;
     QDockWidget *docWidget;
+    QWidget *blankWidget;
+    QWidget *outputWidgetTitle;
     QTextBrowser *docPane;
 //  QTextBrowser *hudPane;
     QWidget *mainWidget;
@@ -248,6 +261,7 @@ private:
     QCheckBox *clear_output_on_run;
     QCheckBox *log_cues;
     QCheckBox *show_line_numbers;
+    QCheckBox *auto_indent_on_run;
     QCheckBox *full_screen;
     QCheckBox *show_log;
     QCheckBox *show_buttons;
@@ -261,6 +275,7 @@ private:
     QRadioButton *rp_force_audio_default;
     QRadioButton *rp_force_audio_headphones;
     QSlider *rp_system_vol;
+    QSlider *gui_transparency_slider;
 
     QWidget *infoWidg;
     QList<QTextBrowser *> infoPanes;
@@ -270,9 +285,7 @@ private:
     QList<QListWidget *> helpLists;
     QHash<QString, help_entry> helpKeywords;
     std::streambuf *coutbuf;
-#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
     std::ofstream stdlog;
-#endif
 
     SonicPiAPIs *autocomplete;
     QString sample_path, log_path;
@@ -284,6 +297,10 @@ private:
     int latest_version_num;
 
     QSplitter *docsplit;
+
+    QLabel *versionLabel;
+
+    QString guiID;
 
 };
 

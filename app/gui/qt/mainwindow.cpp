@@ -73,6 +73,7 @@
 #include "sonicpitheme.h"
 
 #include "oschandler.h"
+#include "sonicpilog.h"
 #include "sonicpiudpserver.h"
 #include "sonicpitcpserver.h"
 
@@ -101,6 +102,14 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QMainWindow* splash)
 MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
 #endif
 {
+  QThreadPool::globalInstance()->setMaxThreadCount(3);
+  app.installEventFilter(this);
+  app.processEvents();
+
+  setupLogPathAndRedirectStdOut();
+  std::cout << "\n\n\n";
+
+  guiID = QUuid::createUuid().toString();
   loaded_workspaces = false;
   this->splash = splash;
   protocol = UDP;
@@ -112,14 +121,8 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
   this->i18n = i18n;
 
   printAsciiArtLogo();
-  // kill any zombie processes that may exist
-  // better: test to see if UDP ports are in use, only kill/sleep if so
-  // best: kill SCSynth directly if needed
-  qDebug() << "[GUI] - shutting down any pre-existing audio servers...";
-  Message msg("/exit");
-  sendOSC(msg);
-  sleep(2);
 
+  startServer();
 
   setUnifiedTitleAndToolBarOnMac(true);
   setWindowIcon(QIcon(":images/icon-smaller.png"));
@@ -137,7 +140,7 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
   latest_version = "";
   version_num = 0;
   latest_version_num = 0;
-  outputPane = new QTextEdit;
+  outputPane = new SonicPiLog;
   errorPane = new QTextBrowser;
   errorPane->setOpenExternalLinks(true);
 
@@ -150,20 +153,23 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
   QFile themeFile(themeFilename);
   SonicPiTheme *theme;
   if(themeFile.exists()){
-    qDebug() << "[GUI] - using custom editor colours";
+    std::cout << "[GUI] - using custom editor colours" << std::endl;
     QSettings settings(themeFilename, QSettings::IniFormat);
     theme = new SonicPiTheme(this, &settings, settings.value("prefs/dark-mode").toBool());
     lexer = new SonicPiLexer(theme);
   }
   else{
-    qDebug() << "[GUI] - using default editor colours";
+    std::cout << "[GUI] - using default editor colours" << std::endl;
     theme = new SonicPiTheme(this, 0, settings.value("prefs/dark-mode").toBool());
     lexer = new SonicPiLexer(theme);
   }
 
-  QThreadPool::globalInstance()->setMaxThreadCount(3);
 
-  server_thread = QtConcurrent::run(this, &MainWindow::startServer);
+
+
+  QTimer *timer = new QTimer(this);
+  connect(timer, SIGNAL(timeout()), this, SLOT(heartbeatOSC()));
+  timer->start(1000);
 
   OscHandler* handler = new OscHandler(this, outputPane, errorPane, theme);
 
@@ -208,6 +214,29 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
 
     QShortcut *moveLineDown = new QShortcut(ctrlMetaKey('n'), workspace);
     connect (moveLineDown, SIGNAL(activated()), workspace, SLOT(moveLineOrSelectionDown())) ;
+
+    // Contextual help
+    QShortcut *contextHelp = new QShortcut(ctrlKey('i'), workspace);
+    connect (contextHelp, SIGNAL(activated()), this, SLOT(helpContext()));
+
+    QShortcut *contextHelp2 = new QShortcut(QKeySequence("F1"), workspace);
+    connect (contextHelp2, SIGNAL(activated()), this, SLOT(helpContext()));
+
+
+    // Font zooming
+    QShortcut *fontZoom = new QShortcut(metaKey('='), workspace);
+    connect (fontZoom, SIGNAL(activated()), workspace, SLOT(zoomFontIn()));
+
+    QShortcut *fontZoom2 = new QShortcut(metaKey('+'), workspace);
+    connect (fontZoom2, SIGNAL(activated()), workspace, SLOT(zoomFontIn()));
+
+
+    QShortcut *fontZoomOut = new QShortcut(metaKey('-'), workspace);
+    connect (fontZoomOut, SIGNAL(activated()), workspace, SLOT(zoomFontOut()));
+
+    QShortcut *fontZoomOut2 = new QShortcut(metaKey('_'), workspace);
+    connect (fontZoomOut2, SIGNAL(activated()), workspace, SLOT(zoomFontOut()));
+
     //set Mark
 #ifdef Q_OS_MAC
     QShortcut *setMark = new QShortcut(QKeySequence("Meta+Space"), workspace);
@@ -242,6 +271,13 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
     QShortcut *cutToBuffer = new QShortcut(ctrlKey(']'), workspace);
     connect(cutToBuffer, SIGNAL(activated()), workspace, SLOT(cut()));
 
+    QShortcut *pasteToBufferWin = new QShortcut(ctrlKey('v'), workspace);
+    connect(pasteToBufferWin, SIGNAL(activated()), workspace, SLOT(paste()));
+
+    //comment line
+    QShortcut *toggleLineComment= new QShortcut(metaKey('/'), workspace);
+    connect(toggleLineComment, SIGNAL(activated()), this, SLOT(toggleCommentInCurrentWorkspace()));
+
     //upcase next word
     QShortcut *upcaseWord= new QShortcut(metaKey('u'), workspace);
     connect(upcaseWord, SIGNAL(activated()), workspace, SLOT(upcaseWordOrSelection()));
@@ -268,11 +304,15 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
   // adding universal shortcuts to outputpane seems to
   // steal events from doc system!?
   // addUniversalCopyShortcuts(outputPane);
-
+#if QT_VERSION >= 0x050400
+  //requires Qt 5
+  new QShortcut(ctrlKey('='), outputPane, SLOT(zoomIn()));
+  new QShortcut(ctrlKey('-'), outputPane, SLOT(zoomOut()));
+#endif
   addUniversalCopyShortcuts(errorPane);
   outputPane->setReadOnly(true);
   errorPane->setReadOnly(true);
-  outputPane->setLineWrapMode(QTextEdit::NoWrap);
+  outputPane->setLineWrapMode(QPlainTextEdit::NoWrap);
 #if defined(Q_OS_WIN)
   outputPane->setFontFamily("Courier New");
 #elif defined(Q_OS_MAC)
@@ -281,12 +321,19 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
   outputPane->setFontFamily("Bitstream Vera Sans Mono");
 #endif
 
+  if(!theme->font("LogFace").isEmpty()){
+      outputPane->setFontFamily(theme->font("LogFace"));
+  }
+
   outputPane->document()->setMaximumBlockCount(1000);
   errorPane->document()->setMaximumBlockCount(1000);
 
+#if QT_VERSION >= 0x050400
+  //zoomable QPlainTextEdit requires QT 5.4
   outputPane->zoomIn(1);
-  outputPane->setTextColor(QColor(theme->color("LogDefaultForeground")));
-  outputPane->append("\n");
+#endif
+  outputPane->setTextColor(QColor(theme->color("LogInfoForeground")));
+  outputPane->appendPlainText("\n");
   //outputPane->append(asciiArtLogo());
 
   errorPane->zoomIn(1);
@@ -311,7 +358,7 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
   prefsWidget->setFeatures(QDockWidget::DockWidgetClosable);
 
   prefsCentral = new QWidget;
-  prefsWidget->setWidget(prefsCentral);
+          prefsWidget->setWidget(prefsCentral);
   QSizePolicy prefsSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
   prefsCentral->setSizePolicy(prefsSizePolicy);
   addDockWidget(Qt::RightDockWidgetArea, prefsWidget);
@@ -325,6 +372,9 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
   outputWidget->setWidget(outputPane);
   addDockWidget(Qt::RightDockWidgetArea, outputWidget);
   outputWidget->setObjectName("output");
+
+  blankWidget = new QWidget();
+  outputWidgetTitle = outputWidget->titleBarWidget();
 
   docsCentral = new QTabWidget;
   docsCentral->setFocusPolicy(Qt::NoFocus);
@@ -386,16 +436,14 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
 
   readSettings();
 
-  #ifndef Q_OS_MAC
+
   setWindowTitle(tr("Sonic Pi"));
-  #endif
 
   connect(&app, SIGNAL( aboutToQuit() ), this, SLOT( onExitCleanup() ) );
 
   waitForServiceSync();
 
   initPrefsWindow();
-  initDocsWindow();
 
   if(settings.value("first_time", 1).toInt() == 1) {
     QTextBrowser* startupPane = new QTextBrowser;
@@ -414,11 +462,13 @@ MainWindow::MainWindow(QApplication &app, bool i18n, QSplashScreen* splash)
 
   focusMode = false;
 
+  updateDarkMode();
+  initDocsWindow();
   updateFullScreenMode();
   updateTabsVisibility();
   updateButtonVisibility();
   updateLogVisibility();
-  updateDarkMode();
+
   requestVersion();
 }
 
@@ -434,14 +484,23 @@ void MainWindow::toggleFullScreenMode() {
 void MainWindow::updateFullScreenMode(){
   if (full_screen->isChecked()) {
     mainWidgetLayout->setMargin(0);
+    outputWidget->setTitleBarWidget(blankWidget);
     this->setWindowFlags(Qt::FramelessWindowHint);
     this->setWindowState(Qt::WindowFullScreen);
     this->show();
   }
   else {
     mainWidgetLayout->setMargin(9);
+    outputWidget->setTitleBarWidget(outputWidgetTitle);
     this->setWindowState(windowState() & ~(Qt::WindowFullScreen));
+#ifdef Q_OS_WIN
+    this->setWindowFlags(Qt::WindowTitleHint | Qt::WindowSystemMenuHint |
+			 Qt::WindowMinimizeButtonHint |
+			 Qt::WindowMaximizeButtonHint |
+			 Qt::WindowCloseButtonHint);
+#else
     this->setWindowFlags(Qt::WindowTitleHint);
+#endif
     this->show();
   }
 }
@@ -545,6 +604,40 @@ void MainWindow::indentCurrentLineOrSelection(SonicPiScintilla* ws) {
   std::string code = ws->text().toStdString();
 
   Message msg("/complete-snippet-or-indent-selection");
+  msg.pushStr(guiID.toStdString());
+  std::string filename = workspaceFilename(ws);
+  msg.pushStr(filename);
+  msg.pushStr(code);
+  msg.pushInt32(start_line);
+  msg.pushInt32(finish_line);
+  msg.pushInt32(point_line);
+  msg.pushInt32(point_index);
+  sendOSC(msg);
+}
+
+void MainWindow::toggleCommentInCurrentWorkspace() {
+  SonicPiScintilla *ws = (SonicPiScintilla*)tabs->currentWidget();
+  toggleComment(ws);
+}
+
+void MainWindow::toggleComment(SonicPiScintilla* ws) {
+  int start_line, finish_line, point_line, point_index;
+  ws->getCursorPosition(&point_line, &point_index);
+  if(ws->hasSelectedText()) {
+    statusBar()->showMessage(tr("Commenting selection..."), 2000);
+    int unused_a, unused_b;
+    ws->getSelection(&start_line, &unused_a, &finish_line, &unused_b);
+  } else {
+    statusBar()->showMessage(tr("Commenting line..."), 2000);
+    start_line = point_line;
+    finish_line = point_line;
+  }
+
+
+  std::string code = ws->text().toStdString();
+
+  Message msg("/toggle-comment");
+  msg.pushStr(guiID.toStdString());
   std::string filename = workspaceFilename(ws);
   msg.pushStr(filename);
   msg.pushStr(code);
@@ -567,12 +660,23 @@ QString MainWindow::rootPath() {
 }
 
 void MainWindow::startServer(){
+
+  // kill any zombie processes that may exist
+  // better: test to see if UDP ports are in use, only kill/sleep if so
+  // best: kill SCSynth directly if needed
+  std::cout << "[GUI] - shutting down any old audio servers..." << std::endl;
+  Message msg("/exit");
+  msg.pushStr(guiID.toStdString());
+  sendOSC(msg);
+  sleep(2);
+
+
     serverProcess = new QProcess();
 
     QString root = rootPath();
 
   #if defined(Q_OS_WIN)
-    QString prg_path = root + "/app/server/native/windows/bin/ruby.exe";
+    QString prg_path = root + "/app/server/native/windows/ruby/bin/ruby.exe";
     QString prg_arg = root + "/app/server/bin/sonic-pi-server.rb";
     sample_path = root + "/etc/samples";
   #elif defined(Q_OS_MAC)
@@ -585,7 +689,7 @@ void MainWindow::startServer(){
     QFile file(prg_path);
     if(!file.exists()) {
       // use system ruby if bundled ruby doesn't exist
-      prg_path = "ruby";
+      prg_path = "/usr/bin/ruby";
     }
 
     QString prg_arg = root + "/app/server/bin/sonic-pi-server.rb";
@@ -603,51 +707,44 @@ void MainWindow::startServer(){
         args << "-t";
     }
 
-    QString sp_user_path = QDir::homePath() + QDir::separator() + ".sonic-pi";
-    log_path =  sp_user_path + QDir::separator() + "log";
-    QDir().mkdir(sp_user_path);
-    QDir().mkdir(log_path);
 
-  #if defined(Q_OS_WIN) || defined(Q_OS_MAC)
-    coutbuf = std::cout.rdbuf();
-    stdlog.open(QString(log_path + "/stdout.log").toStdString().c_str());
-    std::cout.rdbuf(stdlog.rdbuf());
-  #endif
 
     //    std::cout << "[GUI] - exec "<< prg_path.toStdString() << " " << prg_arg.toStdString() << std::endl;
-    std::cout << "[GUI] - booting live coding server" << std::endl;
 
-    QString sp_error_log_path = log_path + QDir::separator() + "errors.log";
-    QString sp_output_log_path = log_path + QDir::separator() + "output.log";
+    std::cout << "[GUI] - booting live coding server" << std::endl;
+    QString sp_error_log_path = log_path + QDir::separator() + "server-errors.log";
+    QString sp_output_log_path = log_path + QDir::separator() + "server-output.log";
     serverProcess->setStandardErrorFile(sp_error_log_path);
     serverProcess->setStandardOutputFile(sp_output_log_path);
     serverProcess->start(prg_path, args);
     if (!serverProcess->waitForStarted()) {
-      invokeStartupError(tr("ruby could not be started, is it installed and in your PATH?"));
+      invokeStartupError(tr("The Sonic Pi server could not be started!"));
       return;
     }
 }
 
 void MainWindow::waitForServiceSync() {
   int timeout = 30;
-  qDebug() << "[GUI] - waiting for server to connect...";
+  std::cout << "[GUI] - waiting for server to connect..." << std::endl;
   while (sonicPiServer->waitForServer() && timeout-- > 0) {
     sleep(1);
     if(sonicPiServer->isIncomingPortOpen()) {
       Message msg("/ping");
+      msg.pushStr(guiID.toStdString());
       msg.pushStr("QtClient/1/hello");
       sendOSC(msg);
     }
   }
-
   if (!sonicPiServer->isServerStarted()) {
+
     if (!startup_error_reported) {
-      invokeStartupError(QString(tr("Failed to start server, please check %1.").arg(log_path)));
+      std::cout << "[GUI] - critical error!" << std::endl;
+      invokeStartupError("Critical server error!");
     }
     return;
   }
 
-    qDebug() << "[GUI] - server connection established";
+  std::cout << "[GUI] - server connection established" << std::endl;
 
 }
 
@@ -775,12 +872,21 @@ void MainWindow::initPrefsWindow() {
   debug_box->setLayout(debug_box_layout);
 
 
+  QGroupBox *transparency_box = new QGroupBox(tr("Transparency"));
+  QGridLayout *transparency_box_layout = new QGridLayout;
+  gui_transparency_slider = new QSlider(this);
+  connect(gui_transparency_slider, SIGNAL(valueChanged(int)), this, SLOT(changeGUITransparency(int)));
+  transparency_box_layout->addWidget(gui_transparency_slider);
+  transparency_box->setLayout(transparency_box_layout);
+
+
+
 
 
   QGroupBox *update_box = new QGroupBox(tr("Updates"));
   QSizePolicy updatesPrefSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
   check_updates = new QCheckBox(tr("Check for updates"));
-  check_updates->setSizePolicy(updatesPrefSizePolicy);
+  update_box->setSizePolicy(updatesPrefSizePolicy);
   check_updates->setToolTip(tr("Toggle automatic update checking.\nThis check involves sending anonymous information about your platform and version."));
   check_updates_now = new QPushButton(tr("Check now"));
   check_updates_now->setToolTip(tr("Force a check for updates now.\nThis check involves sending anonymous information about your platform and version."));
@@ -813,6 +919,11 @@ void MainWindow::initPrefsWindow() {
   editor_display_box->setToolTip(tr("Configure editor display options."));
   QGroupBox *editor_look_feel_box = new QGroupBox(tr("Look and Feel"));
   editor_look_feel_box->setToolTip(tr("Configure editor look and feel."));
+  QGroupBox *automation_box = new QGroupBox(tr("Automation"));
+  automation_box->setToolTip(tr("Configure automation features."));
+  auto_indent_on_run = new QCheckBox(tr("Auto-align"));
+  auto_indent_on_run->setToolTip(tr("Automatically align code on Run"));
+
   show_line_numbers = new QCheckBox(tr("Show line numbers"));
   show_line_numbers->setToolTip(tr("Toggle line number visibility."));
   show_log = new QCheckBox(tr("Show log"));
@@ -837,6 +948,7 @@ void MainWindow::initPrefsWindow() {
 
   QVBoxLayout *editor_display_box_layout = new QVBoxLayout;
   QVBoxLayout *editor_box_look_feel_layout = new QVBoxLayout;
+  QVBoxLayout *automation_box_layout = new QVBoxLayout;
   QGridLayout *gridEditorPrefs = new QGridLayout;
   editor_display_box_layout->addWidget(show_line_numbers);
   editor_display_box_layout->addWidget(show_log);
@@ -846,8 +958,14 @@ void MainWindow::initPrefsWindow() {
   editor_box_look_feel_layout->addWidget(full_screen);
   editor_display_box->setLayout(editor_display_box_layout);
   editor_look_feel_box->setLayout(editor_box_look_feel_layout);
+
+  automation_box_layout->addWidget(auto_indent_on_run);
+  automation_box->setLayout(automation_box_layout);
+
   gridEditorPrefs->addWidget(editor_display_box, 0, 0);
   gridEditorPrefs->addWidget(editor_look_feel_box, 0, 1);
+  gridEditorPrefs->addWidget(automation_box, 1, 1);
+
 
   editor_box->setLayout(gridEditorPrefs);
   grid->addWidget(prefTabs, 0, 0);
@@ -873,6 +991,23 @@ void MainWindow::initPrefsWindow() {
 
   prefTabs->addTab(editor_box, tr("Editor"));
   prefTabs->addTab(studio_prefs_box, tr("Studio"));
+
+  QGroupBox *performance_box = new QGroupBox(tr("Performance"));
+  performance_box->setToolTip(tr("Settings useful for performing with Sonic Pi"));
+
+
+#if defined(Q_OS_WIN)
+  // do nothing
+#elif defined(Q_OS_MAC)
+  QGridLayout *performance_box_layout = new QGridLayout;
+  performance_box_layout->addWidget(transparency_box, 0, 0);
+  performance_box->setLayout(performance_box_layout);
+  prefTabs->addTab(performance_box, tr("Performance"));
+#else
+    // assuming Raspberry Pi
+    // do nothing
+#endif
+
 
   QGroupBox *update_prefs_box = new QGroupBox();
   QGridLayout *update_prefs_box_layout = new QGridLayout;
@@ -921,6 +1056,10 @@ void MainWindow::initPrefsWindow() {
 
   check_updates->setChecked(settings.value("prefs/rp/check-updates", true).toBool());
 
+  auto_indent_on_run->setChecked(settings.value("prefs/auto-indent-on-run", true).toBool());
+
+  gui_transparency_slider->setValue(settings.value("prefs/gui_transparency", 0).toInt());
+
   int stored_vol = settings.value("prefs/rp/system-vol", 50).toInt();
   rp_system_vol->setValue(stored_vol);
 
@@ -953,21 +1092,21 @@ void MainWindow::invokeStartupError(QString msg) {
 
 void MainWindow::startupError(QString msg) {
   splashClose();
-  startup_error_reported = true;
 
-  QString logtext = readFile(log_path + QDir::separator() + "output.log");
+  QString gui_log = readFile(log_path + QDir::separator() + "gui.log");
+  QString server_errors_log = readFile(log_path + QDir::separator() + "server-errors.log");
+  QString server_output_log = readFile(log_path + QDir::separator() + "server-output.log");
+
   QMessageBox *box = new QMessageBox(QMessageBox::Warning,
-				     tr("We're sorry, but Sonic Pi was unable to start..."), msg);
-  box->setDetailedText(logtext);
+				     tr("Server boot error..."), tr("Apologies, a critical error occurred during startup") + ":\n\n " + msg + "\n\n" + tr("Please consider reporting a bug at") + "\nhttp://github.com/samaaron/sonic-pi/issues");
+  QString error_report = "Detailed Error Report:\n\nGUI log\n-------\n" + gui_log + "\n\n\nServer Errors\n-------------\n\n" + server_errors_log + "\n\n\nServer Output\n-------------\n\n" + server_output_log;
+  box->setDetailedText(error_report);
 
   QGridLayout* layout = (QGridLayout*)box->layout();
-  QSpacerItem* hSpacer = new QSpacerItem(500, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
-  QSpacerItem* vSpacer = new QSpacerItem(0, 400, QSizePolicy::Minimum, QSizePolicy::Expanding);
+  QSpacerItem* hSpacer = new QSpacerItem(200, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
   layout->addItem(hSpacer, layout->rowCount(), 0, 1, layout->columnCount());
-  layout->addItem(vSpacer, layout->rowCount(), 0, 1, layout->columnCount());
   box->exec();
-
-  QTimer::singleShot(0, this, SLOT(close()));
+  close();
 }
 
 void MainWindow::replaceBuffer(QString id, QString content, int line, int index, int first_line) {
@@ -1016,6 +1155,7 @@ void MainWindow::loadWorkspaces()
 
   for(int i = 0; i < workspace_max; i++) {
     Message msg("/load-buffer");
+    msg.pushStr(guiID.toStdString());
     std::string s = "workspace_" + number_name(i);
     msg.pushStr(s);
     sendOSC(msg);
@@ -1029,6 +1169,7 @@ void MainWindow::saveWorkspaces()
   for(int i = 0; i < workspace_max; i++) {
     std::string code = workspaces[i]->text().toStdString();
     Message msg("/save-buffer");
+    msg.pushStr(guiID.toStdString());
     std::string s = "workspace_" + number_name(i);
     msg.pushStr(s);
     msg.pushStr(code);
@@ -1039,10 +1180,7 @@ void MainWindow::saveWorkspaces()
 void MainWindow::closeEvent(QCloseEvent *event)
 {
   writeSettings();
-#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
   std::cout.rdbuf(coutbuf); // reset to stdout before exiting
-#endif
-
   event->accept();
 }
 
@@ -1056,6 +1194,9 @@ bool MainWindow::saveAs()
 {
   QString fileName = QFileDialog::getSaveFileName(this, tr("Save Current Buffer"), QDir::homePath() + "/Desktop");
   if(!fileName.isEmpty()){
+    if (!fileName.contains(QRegExp("\\.[a-z]+$"))) {
+        fileName = fileName + ".txt";
+      }
     return saveFile(fileName, (SonicPiScintilla*)tabs->currentWidget());
   } else {
     return false;
@@ -1071,7 +1212,7 @@ void MainWindow::sendOSC(Message m)
     UdpSocket sock;
     sock.connectTo("localhost", PORT_NUM);
     if (!sock.isOk()) {
-        std::cerr << "Error connection to port " << PORT_NUM << ": " << sock.errorMessage() << "\n";
+        std::cerr << "[GUI] - Error connection to port " << PORT_NUM << ": " << sock.errorMessage() << "\n";
     } else {
         PacketWriter pw;
         pw.addMessage(m);
@@ -1084,7 +1225,7 @@ void MainWindow::sendOSC(Message m)
     }
 
     if(!clientSock->waitForConnected(TIMEOUT)){
-      std::cerr <<  "Timeout, could not connect" << "\n";
+      std::cerr <<  "[GUI] - Timeout, could not connect" << "\n";
       clientSock->abort();
       return;
     }
@@ -1097,11 +1238,11 @@ void MainWindow::sendOSC(Message m)
       clientSock->waitForBytesWritten();
 
       if (bytesWritten < 0){
-        std::cerr <<  "Failed to send bytes" << "\n";
+        std::cerr <<  "[GUI] - Failed to send bytes" << "\n";
       }
 
     } else {
-      std::cerr << "Client gone away: " << "\n";
+      std::cerr << "[GUI] - Client gone away: " << "\n";
     }
   }
 }
@@ -1114,6 +1255,9 @@ void MainWindow::resetErrorPane() {
 
 void MainWindow::runCode()
 {
+  if(auto_indent_on_run->isChecked()) {
+    beautifyCode();
+  }
   SonicPiScintilla *ws = (SonicPiScintilla*)tabs->currentWidget();
   ws->highlightAll();
   lexer->highlightAll();
@@ -1122,6 +1266,7 @@ void MainWindow::runCode()
   statusBar()->showMessage(tr("Running Code..."), 1000);
   std::string code = ws->text().toStdString();
   Message msg("/save-and-run-buffer");
+  msg.pushStr(guiID.toStdString());
   std::string filename = workspaceFilename( (SonicPiScintilla*)tabs->currentWidget());
   msg.pushStr(filename);
   if(!print_output->isChecked()) {
@@ -1158,6 +1303,20 @@ void MainWindow::unhighlightCode()
   lexer->unhighlightAll();
 }
 
+void MainWindow::zoomCurrentWorkspaceIn()
+{
+  statusBar()->showMessage(tr("Zooming In..."), 2000);
+  SonicPiScintilla* ws = ((SonicPiScintilla*)tabs->currentWidget());
+  ws->zoomFontIn();
+}
+
+void MainWindow::zoomCurrentWorkspaceOut()
+{
+  statusBar()->showMessage(tr("Zooming Out..."), 2000);
+  SonicPiScintilla* ws = ((SonicPiScintilla*)tabs->currentWidget());
+  ws->zoomFontOut();
+}
+
 void MainWindow::beautifyCode()
 {
   statusBar()->showMessage(tr("Beautifying..."), 2000);
@@ -1168,6 +1327,7 @@ void MainWindow::beautifyCode()
   ws->getCursorPosition(&line, &index);
   int first_line = ws->firstVisibleLine();
   Message msg("/beautify-buffer");
+  msg.pushStr(guiID.toStdString());
   std::string filename = workspaceFilename( (SonicPiScintilla*)tabs->currentWidget());
   msg.pushStr(filename);
   msg.pushStr(code);
@@ -1181,12 +1341,14 @@ void MainWindow::reloadServerCode()
 {
   statusBar()->showMessage(tr("Reloading..."), 2000);
   Message msg("/reload");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
 void MainWindow::check_for_updates_now() {
   statusBar()->showMessage(tr("Checking for updates..."), 2000);
   Message msg("/check-for-updates-now");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1194,6 +1356,7 @@ void MainWindow::enableCheckUpdates()
 {
   statusBar()->showMessage(tr("Enabling update checking..."), 2000);
   Message msg("/enable-update-checking");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1201,6 +1364,7 @@ void MainWindow::disableCheckUpdates()
 {
   statusBar()->showMessage(tr("Disabling update checking..."), 2000);
   Message msg("/disable-update-checking");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1208,6 +1372,7 @@ void MainWindow::mixerHpfEnable(float freq)
 {
   statusBar()->showMessage(tr("Enabling Mixer HPF..."), 2000);
   Message msg("/mixer-hpf-enable");
+  msg.pushStr(guiID.toStdString());
   msg.pushFloat(freq);
   sendOSC(msg);
 }
@@ -1216,6 +1381,7 @@ void MainWindow::mixerHpfDisable()
 {
   statusBar()->showMessage(tr("Disabling Mixer HPF..."), 2000);
   Message msg("/mixer-hpf-disable");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1223,6 +1389,7 @@ void MainWindow::mixerLpfEnable(float freq)
 {
   statusBar()->showMessage(tr("Enabling Mixer LPF..."), 2000);
   Message msg("/mixer-lpf-enable");
+  msg.pushStr(guiID.toStdString());
   msg.pushFloat(freq);
   sendOSC(msg);
 }
@@ -1231,6 +1398,7 @@ void MainWindow::mixerLpfDisable()
 {
   statusBar()->showMessage(tr("Disabling Mixer LPF..."), 2000);
   Message msg("/mixer-lpf-disable");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1238,6 +1406,7 @@ void MainWindow::mixerInvertStereo()
 {
   statusBar()->showMessage(tr("Enabling Inverted Stereo..."), 2000);
   Message msg("/mixer-invert-stereo");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1245,6 +1414,7 @@ void MainWindow::mixerStandardStereo()
 {
   statusBar()->showMessage(tr("Enabling Standard Stereo..."), 2000);
   Message msg("/mixer-standard-stereo");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1252,6 +1422,7 @@ void MainWindow::mixerMonoMode()
 {
   statusBar()->showMessage(tr("Mono Mode..."), 2000);
   Message msg("/mixer-mono-mode");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1259,6 +1430,7 @@ void MainWindow::mixerStereoMode()
 {
   statusBar()->showMessage(tr("Stereo Mode..."), 2000);
   Message msg("/mixer-stereo-mode");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1324,20 +1496,35 @@ void MainWindow::helpContext()
   }
 }
 
+
+
+#if defined(Q_OS_MAC)
+void MainWindow::changeGUITransparency(int val)
+#else
+void MainWindow::changeGUITransparency(int)
+#endif
+{
+#if defined(Q_OS_MAC)
+  // scale it linearly from 0 -> 100 to 0.3 -> 1
+  setWindowOpacity((0.7 * ((100 - (float)val) / 100.0))  + 0.3);
+#else
+    // do nothing
+#endif
+
+
+}
+
+
+#if defined(Q_OS_LINUX)
 void MainWindow::changeRPSystemVol(int val)
+#else
+void MainWindow::changeRPSystemVol(int)
+#endif
 {
 #if defined(Q_OS_WIN)
-  //do nothing
-  val = val;
+  // do nothing
 #elif defined(Q_OS_MAC)
-  statusBar()->showMessage(tr("Updating System Volume..."), 2000);
-  //do nothing, just print out what it would do on RPi
-  float v = (float) val;
-  float vol_float = pow(v/100.0, (float)1./3.) * 100.0;
-  std::ostringstream ss;
-  ss << vol_float;
-  QString prog = "amixer cset numid=1 " + QString::fromStdString(ss.str()) + '%';
-  std::cout << "[GUI] - " << prog.toStdString() << std::endl;
+  // do nothing
 #else
   //assuming Raspberry Pi
   QProcess *p = new QProcess();
@@ -1411,6 +1598,7 @@ void MainWindow::updateDarkMode(){
 
     QString windowColor = currentTheme->color("WindowBackground").name();
     QString windowForegroundColor = currentTheme->color("WindowForeground").name();
+    QString logInfoForegroundColor = currentTheme->color("LogInfoForeground").name();
     QString paneColor = currentTheme->color("PaneBackground").name();
     QString windowBorder = currentTheme->color("WindowBorder").name();
     QString selectedTab = "deeppink";
@@ -1425,8 +1613,9 @@ void MainWindow::updateDarkMode(){
     QString toolTipStyling =     QString("QToolTip {color: #ffffff; background-color: #929292; border: 0px;} ");
 
     this->setStyleSheet(QString(buttonStyling + splitterStyling+ toolTipStyling+scrollStyling + "QToolButton:hover{background: transparent;} QSlider::groove:vertical{margin: 2px 0; background: dodgerblue; border-radius: 3px;} QSlider::handle:vertical {border: 1px solid #222; border-radius: 3px; height: 30px; background: #333;} QMenu{background: #929292; color: #000; } QMenu:selected{background: deeppink;} QMainWindow::separator{border: 1px solid %1;} QMainWindow{background-color: %1; color: white;}").arg(windowColor));
-    statusBar()->setStyleSheet( QString("QStatusBar{background-color: %1; border-top: 1px solid %2;}").arg(windowColor, windowBorder));
-    outputPane->setStyleSheet(  QString("QTextEdit{background-color: %1; color: %2; border: 0px;}").arg(paneColor, windowForegroundColor));
+    statusBar()->setStyleSheet( QString("QWidget{background-color: %1; color: #808080;} QStatusBar{background-color: %1; border-top: 1px solid %2;}").arg(windowColor, windowBorder));
+    // Colour log messages as info by default
+    outputPane->setStyleSheet(  QString("QPlainTextEdit{background-color: %1; color: %2; border: 0px;}").arg(paneColor, logInfoForegroundColor));
     outputWidget->setStyleSheet(widgetTitleStyling);
     prefsWidget->setStyleSheet( QString(widgetTitleStyling + "QGroupBox:title{subcontrol-origin: margin; top:0px; padding: 0px 0 20px 5px; font-size: 11px; color: %1; background-color: transparent;} QGroupBox{padding: 0 0 0 0; subcontrol-origin: margin; margin-top: 15px; margin-bottom: 0px; font-size: 11px; background-color:#1c2325; border: 1px solid #1c2529; color: %1;} QWidget{background-color: %2;}" + buttonStyling).arg(windowForegroundColor, windowColor));
     tabs->setStyleSheet(tabStyling);
@@ -1437,7 +1626,6 @@ void MainWindow::updateDarkMode(){
     infoWidg->setStyleSheet(    QString(scrollStyling + tabStyling + " QTextEdit{background-color: %1;}").arg(paneColor));
     toolBar->setStyleSheet(     QString("QToolBar{background-color: %1; border-bottom: 1px solid %2;}").arg(windowColor,windowBorder));
     errorPane->setStyleSheet(   QString("QTextEdit{background-color: %1;} .error-background{background-color: %2} ").arg(paneColor, currentTheme->color("ErrorBackground").name()));
-
     for(int i=0; i < tabs->count(); i++){
       SonicPiScintilla *ws = (SonicPiScintilla *)tabs->widget(i);
       ws->setFrameShape(QFrame::NoFrame);
@@ -1471,6 +1659,7 @@ void MainWindow::updateDarkMode(){
     QString l_windowColor = currentTheme->color("WindowBackground").name();
     QString l_windowForegroundColor = currentTheme->color("WindowForeground").name();
     QString l_foregroundColor = currentTheme->color("Foreground").name();
+    QString l_logInfoForegroundColor = currentTheme->color("LogInfoForeground").name();
     QString l_paneColor = currentTheme->color("PaneBackground").name();
     QString l_windowBorder = currentTheme->color("WindowBorder").name();
     QString l_selectedTab = "deeppink";
@@ -1514,7 +1703,8 @@ void MainWindow::updateDarkMode(){
     this->setStyleSheet(QString(l_buttonStyling + l_splitterStyling+ l_toolTipStyling+l_scrollStyling + "QSlider::groove:vertical{margin: 2px 0; background: dodgerblue; border-radius: 3px;} QSlider::handle:vertical {border: 1px solid #222; border-radius: 3px; height: 30px; background: #333;} QMenu{background: #929292; color: #000; } QMenu:selected{background: deeppink;} QMainWindow::separator{border: 1px solid %1;} QMainWindow{background-color: %1; color: white;}").arg(l_windowColor));
 
     statusBar()->setStyleSheet( QString("QStatusBar{background-color: %1; border-top: 1px solid %2;}").arg(l_windowColor, l_windowBorder));
-    outputPane->setStyleSheet(  QString("QTextEdit{background-color: %1; color: %2; border: 0px;}").arg(l_paneColor, l_windowForegroundColor));
+    // Colour log messages as info by default
+    outputPane->setStyleSheet(  QString("QPlainTextEdit{background-color: %1; color: %2; border: 0px;}").arg(l_paneColor, l_logInfoForegroundColor));
     outputWidget->setStyleSheet(l_widgetTitleStyling);
     prefsWidget->setStyleSheet( QString(l_buttonStyling + l_widgetTitleStyling + "QGroupBox:title{subcontrol-origin: margin; top:0px; padding: 0px 0 20px 5px; font-size: 11px; color: %1; background-color: transparent;} QGroupBox{padding: 0 0 0 0; subcontrol-origin: margin; margin-top: 15px; margin-bottom: 0px; font-size: 11px; background-color: %2; border: 1px solid lightgray; color: %1;}").arg(l_windowForegroundColor, l_windowColor));
     tabs->setStyleSheet(        l_tabStyling);
@@ -1562,10 +1752,7 @@ void MainWindow::setRPSystemAudioHeadphones()
 #if defined(Q_OS_WIN)
   //do nothing
 #elif defined(Q_OS_MAC)
-  statusBar()->showMessage(tr("Switching To Headphone Audio Output..."), 2000);
-  //do nothing, just print out what it would do on RPi
-  QString prog = "amixer cset numid=3 1";
-  std::cout << "[GUI] - " << prog.toStdString() << std::endl;
+  //do nothing
 #else
   //assuming Raspberry Pi
   statusBar()->showMessage(tr("Switching To Headphone Audio Output..."), 2000);
@@ -1581,10 +1768,7 @@ void MainWindow::setRPSystemAudioHDMI()
 #if defined(Q_OS_WIN)
   //do nothing
 #elif defined(Q_OS_MAC)
-  statusBar()->showMessage(tr("Switching To HDMI Audio Output..."), 2000);
-  //do nothing, just print out what it would do on RPi
-  QString prog = "amixer cset numid=3 2";
-  std::cout << "[GUI] - " << prog.toStdString() << std::endl;
+  //do nothing
 #else
   //assuming Raspberry Pi
   statusBar()->showMessage(tr("Switching To HDMI Audio Output..."), 2000);
@@ -1598,12 +1782,8 @@ void MainWindow::setRPSystemAudioAuto()
 {
 #if defined(Q_OS_WIN)
   //do nothing
-
 #elif defined(Q_OS_MAC)
-  statusBar()->showMessage(tr("Switching To Default Audio Output..."), 2000);
-  //do nothing, just print out what it would do on RPi
-  QString prog = "amixer cset numid=3 0";
-  std::cout << "[GUI] - " << prog.toStdString() << std::endl;
+  //do nothing
 #else
   //assuming Raspberry Pi
   statusBar()->showMessage(tr("Switching To Default Audio Output..."), 2000);
@@ -1622,44 +1802,15 @@ void MainWindow::showPrefsPane()
   }
 }
 
-void MainWindow::zoomFontIn()
-{
-  SonicPiScintilla* ws = ((SonicPiScintilla*)tabs->currentWidget());
-  int zoom = ws->property("zoom").toInt();
-  zoom++;
-  if (zoom > 20) zoom = 20;
-  ws->setProperty("zoom", QVariant(zoom));
-  ws->zoomTo(zoom);
-  if (show_line_numbers->isChecked()){
-    ws->showLineNumbers();
-  } else {
-    ws->hideLineNumbers();
-  }
-}
-
-void MainWindow::zoomFontOut()
-{
-  SonicPiScintilla* ws = ((SonicPiScintilla*)tabs->currentWidget());
-  int zoom = ws->property("zoom").toInt();
-  zoom--;
-  if (zoom < -10) zoom = -10;
-  ws->setProperty("zoom", QVariant(zoom));
-  ws->zoomTo(zoom);
-  if (show_line_numbers->isChecked()){
-    ws->showLineNumbers();
-  } else {
-    ws->hideLineNumbers();
-  }
-}
-
 void MainWindow::wheelEvent(QWheelEvent *event)
 {
 #if defined(Q_OS_WIN)
   if (event->modifiers() & Qt::ControlModifier) {
+    SonicPiScintilla* ws = ((SonicPiScintilla*)tabs->currentWidget());
     if (event->angleDelta().y() > 0)
-      zoomFontIn();
+      ws->zoomFontIn();
     else
-      zoomFontOut();
+      ws->zoomFontOut();
   }
 #else
   (void)event;
@@ -1669,6 +1820,7 @@ void MainWindow::wheelEvent(QWheelEvent *event)
 void MainWindow::stopRunningSynths()
 {
   Message msg("/stop-all-jobs");
+  msg.pushStr(guiID.toStdString());
   sendOSC(msg);
 }
 
@@ -1694,6 +1846,15 @@ QKeySequence MainWindow::metaKey(char key)
   return QKeySequence(QString("Ctrl+%1").arg(key));
 #else
   return QKeySequence(QString("alt+%1").arg(key));
+#endif
+}
+
+Qt::Modifier MainWindow::metaKeyModifier()
+{
+#ifdef Q_OS_MAC
+  return Qt::CTRL;
+#else
+  return Qt::ALT;
 #endif
 }
 
@@ -1759,10 +1920,9 @@ void MainWindow::setupAction(QAction *action, char key, QString tooltip,
 
 void MainWindow::createShortcuts()
 {
-  new QShortcut(QKeySequence("F1"), this, SLOT(helpContext()));
-  new QShortcut(ctrlKey('i'), this, SLOT(helpContext()));
-  new QShortcut(metaKey('<'), this, SLOT(tabPrev()));
-  new QShortcut(metaKey('>'), this, SLOT(tabNext()));
+
+  new QShortcut(metaKey('{'), this, SLOT(tabPrev()));
+  new QShortcut(metaKey('}'), this, SLOT(tabNext()));
   //new QShortcut(metaKey('U'), this, SLOT(reloadServerCode()));
 
   new QShortcut(QKeySequence("F9"), this, SLOT(toggleButtonVisibility()));
@@ -1778,8 +1938,9 @@ void MainWindow::createToolBar()
 {
   // Run
   QAction *runAct = new QAction(QIcon(":/images/run.png"), tr("Run"), this);
-  setupAction(runAct, 'R', tr("Run the code in the current workspace"),
+  setupAction(runAct, 'R', tr("Run the code in the current buffer"),
 	      SLOT(runCode()));
+  new QShortcut(QKeySequence(metaKeyModifier() + Qt::Key_Return), this, SLOT(runCode()));
 
   // Stop
   QAction *stopAct = new QAction(QIcon(":/images/stop.png"), tr("Stop"), this);
@@ -1815,14 +1976,12 @@ void MainWindow::createToolBar()
   // Font Size Increase
   QAction *textIncAct = new QAction(QIcon(":/images/size_up.png"),
 			    tr("Increase Text Size"), this);
-  setupAction(textIncAct, '+', tr("Make text bigger"), SLOT(zoomFontIn()));
-  new QShortcut(metaKey('='), this, SLOT(zoomFontIn()));
+  setupAction(textIncAct, 0, tr("Increase Text Size"), SLOT(zoomCurrentWorkspaceIn()));
 
   // Font Size Decrease
   QAction *textDecAct = new QAction(QIcon(":/images/size_down.png"),
 			    tr("Decrease Text Size"), this);
-  setupAction(textDecAct, '-', tr("Make text smaller"), SLOT(zoomFontOut()));
-  new QShortcut(metaKey('_'), this, SLOT(zoomFontOut()));
+  setupAction(textDecAct, 0, tr("Decrease Text Size"), SLOT(zoomCurrentWorkspaceOut()));
 
   QWidget *spacer = new QWidget();
   spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -1899,7 +2058,7 @@ void MainWindow::createInfoPane() {
   infoWidg = new QWidget;
   infoWidg->setWindowIcon(QIcon(":images/icon-smaller.png"));
   infoWidg->setLayout(infoLayout);
-  infoWidg->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::CustomizeWindowHint);
+  infoWidg->setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::CustomizeWindowHint | Qt::WindowStaysOnTopHint);
   infoWidg->setWindowTitle(tr("Sonic Pi - Info"));
 
   QAction *closeInfoAct = new QAction(this);
@@ -1924,6 +2083,7 @@ void MainWindow::toggleRecording() {
     recAct->setToolTip(tr("Stop Recording"));
     rec_flash_timer->start(500);
     Message msg("/start-recording");
+    msg.pushStr(guiID.toStdString());
     sendOSC(msg);
   } else {
     rec_flash_timer->stop();
@@ -1931,14 +2091,17 @@ void MainWindow::toggleRecording() {
     recAct->setToolTip(tr("Start Recording"));
     recAct->setIcon(QIcon(":/images/rec.png"));
     Message msg("/stop-recording");
+    msg.pushStr(guiID.toStdString());
     sendOSC(msg);
     QString fileName = QFileDialog::getSaveFileName(this, tr("Save Recording"), QDir::homePath() + "/Desktop/my-recording.wav");
     if (!fileName.isEmpty()) {
       Message msg("/save-recording");
+      msg.pushStr(guiID.toStdString());
       msg.pushStr(fileName.toStdString());
       sendOSC(msg);
     } else {
       Message msg("/delete-recording");
+      msg.pushStr(guiID.toStdString());
       sendOSC(msg);
     }
   }
@@ -1947,7 +2110,10 @@ void MainWindow::toggleRecording() {
 
 void MainWindow::createStatusBar()
 {
+  versionLabel = new QLabel(this);
+  versionLabel->setText("Sonic Pi");
   statusBar()->showMessage(tr("Ready..."));
+  statusBar()->addPermanentWidget(versionLabel);
 }
 
 void MainWindow::readSettings() {
@@ -2004,7 +2170,8 @@ void MainWindow::writeSettings()
   settings.setValue("prefs/rp/system-vol", rp_system_vol->value());
 
   settings.setValue("prefs/rp/check-updates", check_updates->isChecked());
-
+  settings.setValue("prefs/auto-indent-on-run", auto_indent_on_run->isChecked());
+  settings.setValue("prefs/gui_transparency", gui_transparency_slider->value());
   settings.setValue("workspace", tabs->currentIndex());
 
   for (int w=0; w < workspace_max; w++) {
@@ -2076,6 +2243,7 @@ SonicPiScintilla* MainWindow::filenameToWorkspace(std::string filename)
 
 void MainWindow::onExitCleanup()
 {
+  setupLogPathAndRedirectStdOut();
   if(serverProcess->state() == QProcess::NotRunning) {
     std::cout << "[GUI] - warning, server process is not running." << std::endl;
     sonicPiServer->stopServer();
@@ -2088,14 +2256,22 @@ void MainWindow::onExitCleanup()
     sleep(1);
     std::cout << "[GUI] - asking server process to exit..." << std::endl;
     Message msg("/exit");
+    msg.pushStr(guiID.toStdString());
     sendOSC(msg);
   }
   if(protocol == UDP){
     osc_thread.waitForFinished();
   }
   std::cout << "[GUI] - exiting. Cheerio :-)" << std::endl;
-
+  std::cout.rdbuf(coutbuf); // reset to stdout before exiting
 }
+
+void MainWindow::heartbeatOSC() {
+  Message msg("/gui-heartbeat");
+  msg.pushStr(guiID.toStdString());
+  sendOSC(msg);
+}
+
 
 void MainWindow::updateDocPane(QListWidgetItem *cur) {
   QString url = cur->data(32).toString();
@@ -2241,7 +2417,6 @@ QString MainWindow::asciiArtLogo(){
 }
 
 void MainWindow::printAsciiArtLogo(){
-
   QString s = asciiArtLogo();
   std::cout << std::endl << std::endl << std::endl;
 #if QT_VERSION >= 0x050400
@@ -2252,12 +2427,11 @@ void MainWindow::printAsciiArtLogo(){
   qDebug() << s;
   std::cout << std::endl;
 #endif
-
-
 }
 
 void MainWindow::requestVersion() {
     Message msg("/version");
+    msg.pushStr(guiID.toStdString());
     sendOSC(msg);
 }
 
@@ -2265,12 +2439,16 @@ void MainWindow::open_sonic_pi_net() {
   QDesktopServices::openUrl(QUrl("http://sonic-pi.net", QUrl::TolerantMode));
 }
 
-void MainWindow::updateVersionNumber(QString v, int v_num,QString latest_v, int latest_v_num, QDate last_checked) {
+void MainWindow::updateVersionNumber(QString v, int v_num,QString latest_v, int latest_v_num, QDate last_checked, QString platform) {
   version = v;
   version_num = v_num;
   latest_version = latest_v;
   latest_version_num = latest_v_num;
 
+  // update status bar
+  versionLabel->setText(QString("Sonic Pi " + v + " on " + platform));
+
+  // update preferences
   QString last_update_check = tr("Last checked %1").arg(last_checked.toString());
 
   QString preamble = tr("Sonic Pi checks for updates\nevery two weeks.");
@@ -2289,4 +2467,26 @@ void MainWindow::updateVersionNumber(QString v, int v_num,QString latest_v, int 
   }
 }
 
+
+void MainWindow::setupLogPathAndRedirectStdOut() {
+  QString sp_user_path = QDir::homePath() + QDir::separator() + ".sonic-pi";
+  log_path =  sp_user_path + QDir::separator() + "log";
+  QDir().mkdir(sp_user_path);
+  QDir().mkdir(log_path);
+
+  coutbuf = std::cout.rdbuf();
+  stdlog.open(QString(log_path + "/gui.log").toStdString().c_str());
+  std::cout.rdbuf(stdlog.rdbuf());
+}
+
+
+bool MainWindow::eventFilter(QObject *obj, QEvent *evt)
+{
+    if(obj==qApp && ( evt->type() == QEvent::ApplicationActivate ))
+    {
+      statusBar()->showMessage(tr("Welcome back. Now get your live code on..."), 2000);
+      update();
+    }
+    return QMainWindow::eventFilter(obj, evt);
+}
 #include "ruby_help.h"

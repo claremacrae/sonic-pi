@@ -1,4 +1,4 @@
-#--
+1#--
 # This file is part of Sonic Pi: http://sonic-pi.net
 # Full project source: https://github.com/samaaron/sonic-pi
 # License: https://github.com/samaaron/sonic-pi/blob/master/LICENSE.md
@@ -16,9 +16,12 @@ require 'securerandom'
 
 module SonicPi
   module Util
+    @@tilde_dir = Dir.home
     @@project_path = nil
     @@log_path = nil
     @@current_uuid = nil
+    @@home_dir = nil
+    @@util_lock = Mutex.new
     @@raspberry_pi_1 = RUBY_PLATFORM.match(/.*arm.*-linux.*/) && File.exists?('/proc/cpuinfo') && !(`cat /proc/cpuinfo | grep ARMv6`.empty?)
 
     def os
@@ -44,6 +47,9 @@ module SonicPi
       os == :raspberry && !@@raspberry_pi_1
     end
 
+    def unify_tilde_dir(path)
+      path.gsub(/\A#{@@tilde_dir}/, "~")
+    end
 
     def num_audio_busses_for_current_os
       if os == :raspberry
@@ -62,6 +68,23 @@ module SonicPi
       end
     end
 
+    def host_platform_desc
+      case os
+      when :raspberry
+        if raspberry_pi_1?
+          "Raspberry Pi"
+        else
+          "Raspberry Pi 2"
+        end
+      when :linux
+        "Linux"
+      when :osx
+        "Mac"
+      when :windows
+        "Win"
+      end
+    end
+
     def default_control_delta
       if raspberry_pi_1?
         0.02
@@ -73,49 +96,68 @@ module SonicPi
     end
 
     def home_dir
-      File.expand_path('~/.sonic-pi/')
+      return @@home_dir if @@home_dir
+      @@util_lock.synchronize do
+        return @@home_dir if @@home_dir
+        path = File.expand_path((ENV['SONIC_PI_HOME'] || Dir.home) + '/.sonic-pi/')
+        ensure_dir(path)
+        @@home_dir = path
+        path
+      end
+    end
+
+    def init_path
+      home_dir + '/init.rb'
     end
 
     def project_path
       return @@project_path if @@project_path
-      ## TODO: allow user to modify this for different projects
-      path = home_dir + '/store/default/'
-      ensure_dir(path)
-      @@project_path = path
-      path
+      @@util_lock.synchronize do
+        return @@project_path if @@project_path
+        ## TODO: allow user to modify this for different projects
+        path = home_dir + '/store/default/'
+        ensure_dir(path)
+        @@project_path = path
+        path
+      end
     end
 
     def log_path
       return @@log_path if @@log_path
-      path = home_dir + '/log/'
-      ensure_dir(path)
-      @@log_path = path
-      path
+      @@util_lock.synchronize do
+        return @@log_path if @@log_path
+        path = home_dir + '/log/'
+        ensure_dir(path)
+        @@log_path = path
+        path
+      end
     end
 
     def global_uuid
       return @@current_uuid if @@current_uuid
-      path = home_dir + '/.uuid'
-      ensure_dir(home_dir)
+      @@util_lock.synchronize do
+        return @@current_uuid if @@current_uuid
+        path = home_dir + '/.uuid'
 
-      if (File.exists? path)
-        old_id = File.readlines(path).first.strip
-        if  (not old_id.empty?) &&
-            (old_id.size == 36)
-          @@current_uuid = old_id
-          return old_id
+        if (File.exists? path)
+          old_id = File.readlines(path).first.strip
+          if  (not old_id.empty?) &&
+              (old_id.size == 36)
+            @@current_uuid = old_id
+            return old_id
+          end
         end
-      end
 
-      # invalid or no uuid - create and store a new one
-      new_uuid = SecureRandom.uuid
-      File.open(path, 'w') {|f| f.write(new_uuid)}
-      @@current_uuid = new_uuid
-      new_uuid
+        # invalid or no uuid - create and store a new one
+        new_uuid = SecureRandom.uuid
+        File.open(path, 'w') {|f| f.write(new_uuid)}
+        @@current_uuid = new_uuid
+        new_uuid
+      end
     end
 
     def ensure_dir(d)
-      FileUtils.mkdir_p d
+      FileUtils.mkdir_p(d) unless File.exists?(d)
     end
 
     def root_path
@@ -147,11 +189,15 @@ module SonicPi
     end
 
     def synthdef_path
-      File.absolute_path("#{etc_path}/synthdefs")
+      File.absolute_path("#{etc_path}/synthdefs/compiled")
     end
 
     def samples_path
       File.absolute_path("#{etc_path}/samples")
+    end
+
+    def buffers_path
+      File.absolute_path("#{etc_path}/buffers")
     end
 
     def app_path
@@ -176,6 +222,20 @@ module SonicPi
 
     def native_path
       File.absolute_path("#{server_path}/native/#{os}")
+    end
+
+    def scsynth_log_path
+      log_path + '/scsynth.log'
+    end
+
+    def ruby_path
+      # For running tests
+      case os
+      when :windows
+        File.join(native_path, "bin", "ruby.exe")
+      when :osx, :raspberry, :linux
+        File.join(native_path, "ruby", "bin", "ruby")
+      end
     end
 
     def user_settings_path
@@ -268,7 +328,7 @@ module SonicPi
     def arg_h_pp(arg_h)
       s = "{"
       arg_h.each do |k, v|
-        rounded = v.is_a?(Float) ? v.round(4) : v
+        rounded = v.is_a?(Float) ? v.round(4) : v.inspect
         s << "#{k}: #{rounded}, "
       end
       s.chomp(", ") << "}"

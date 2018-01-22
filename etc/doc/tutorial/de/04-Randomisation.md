@@ -18,13 +18,13 @@ random*, also eine Zufallszahl innerhalb eines bestimmten
 Wertebereichs).
 
 ```
-play rrand(50, 100)
+play rrand(50, 95)
 ```
 
-Oh, eine zufällige Note wird gespielt. Es war die Note `77.4407`. Eine 
+Oh, eine zufällige Note wird gespielt. Es war die Note `83.7527`. Eine 
 nette Note zwischen 50 und 100. Aber hallo, habe ich gerade diese 
 angeblich zufällige Note exakt vorhergesagt? Da ist doch etwas nicht 
-ganz astrein. Lasse den Code noch einmal ablaufen. Wieder `77.4407`, 
+ganz astrein. Lasse den Code noch einmal ablaufen. Wieder `83.7527`, 
 oder? Das kann doch kein Zufall sein!
 
 Die Antwort ist, es ist nicht wirklich zufällig, sondern 
@@ -33,13 +33,13 @@ die wiederholbar sind. Das ist sehr nützlich, denn so ist
 sichergestellt, dass die Musik von Deinem Rechner auf anderen Rechnern
 identisch klingt - sogar dann, wenn Du einen Zufallsfaktor einbaust.
 
-Klar, wenn in einem bestimmten Musikstück jedesmal die `77.4407` als 
+Klar, wenn in einem bestimmten Musikstück jedesmal die `83.7527` als 
 'zufällige' Zahl gewählt würde, dann wäre das nicht besonders 
 interessant. Aber so ist es auch nicht. Versuch folgendes:
 
 ```
 loop do
-  play rrand(50, 100)
+  play rrand(50, 95)
   sleep 0.5
 end 
 ```
@@ -69,7 +69,7 @@ end
 ## Zufällig abschneiden (random cutoff)
 
 Ein anderes spannendes Beispiel für die Randomisierung ist das 
-zufällige Abschneiden[^12] eines Synth-Klangs. Der `:tb303`-Emulator ist 
+zufällige Abschneiden hoher Töne[^12] eines Synth-Klangs. Der `:tb303`-Emulator ist 
 ein guter Synth, um das auszuprobieren:
 
 ```
@@ -151,9 +151,9 @@ sein, also keine ganze Zahl, sondern eine mit einem Komma[^14]. Einige
 Beispiele für Gleitkommazahlen, die der wiederholte Aufruf von 
 `rrand(20, 110)` ausgeben könnte:
 
-* 20.343235
-* 42.324324
-* 100.93423
+* 87.5054931640625
+* 86.05255126953125
+* 61.77825927734375
 
 ## rrand_i
 
@@ -165,9 +165,9 @@ auch sagen: es ist *inklusiv*, also nicht exklusive der Werte, mit
 denen man den Bereich für die Auswahl festgelegt hat). `rrand_i(20, 
 110)` könnte zum Beispiel die folgenden Werte ausgeben:
 
-* 20
-* 46
-* 99
+* 88
+* 86
+* 62
 
 ## rand
 
@@ -186,8 +186,8 @@ end
 
 ## rand_i
 
-Ähnlich wie bei `rrand_i` und `rrand`, wählt `rand_i` eine ganze Zahl 
-zwischen 0 und einem angegebenen Maximalwert aus.
+Ähnlich wie bei `rrand_i` und `rrand`, wählt `rand_i` eine zufällige
+ganze Zahl zwischen 0 und einem angegebenen Maximalwert aus.
 
 ## dice
 
@@ -224,8 +224,8 @@ Jetzt los, bring Deinen Code mit ein paar Zufälligkeiten durcheinander!
     innerhalb der Schleife steht, wird so oft wie angegeben oder
     unendlich oft wiederholt. 
 
-[^12]: In Sonic Pi wird das das Abschneiden oder Verkürzen mit dem
-    Ausdruck `cutoff` bezeichnet.
+[^12]: In Sonic Pi wird das Abschneiden oder Verkürzen hoher Töne
+    (Filtern) mit dem Ausdruck `cutoff` bezeichnet.
 
 [^13]: Das englische Wort *Seed* bedeutet im Deutschen *Keim* oder
     *Samen*; hier wird es als *Startpunkt* übersetzt. 
